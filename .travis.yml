@@ -9,5 +9,5 @@ julia:
 notifications:
   email: false
   
-  - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
-  - julia -e 'Pkg.clone(pwd()); Pkg.build("DriftDiffusionPoissonSystems"); Pkg.test("DriftDiffusionPoissonSystems"; coverage=true)'
+ #- if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
+ # - julia -e 'Pkg.clone(pwd()); Pkg.build("DriftDiffusionPoissonSystems"); Pkg.test("DriftDiffusionPoissonSystems"; coverage=true)'
