@@ -1,6 +1,6 @@
 # DriftDiffusionPoissonSystems.jl &mdash; A 2D Finite Element Method Solver for Drift-Diffusion-Poisson Systems and Semilinear Poisson Equations Written in Julia
 
-[![Build Status](https://travis-ci.org/Stivanification/DriftDiffusionPoissonSystems.svg?branch=master)](https://travis-ci.org/SStivanification/DriftDiffusionPoissonSystems)
+[![Build Status](https://travis-ci.org/Stivanification/DriftDiffusionPoissonSystems.svg?branch=master)](https://travis-ci.org/Stivanification/DriftDiffusionPoissonSystems)
 
 
 This package provides a numerical solution to drift-diffusion poisson equations in Slotboom variables. The system
