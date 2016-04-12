@@ -2,7 +2,6 @@
 
 [![Build Status](https://travis-ci.org/Stivanification/DriftDiffusionPoissonSystems.svg?branch=master)](https://travis-ci.org/Stivanification/DriftDiffusionPoissonSystems)
 
-
 This package provides a numerical solution to drift-diffusion poisson equations in Slotboom variables. The system
 
 <img src="DDPSeq.png" alt="Drift-Diffusion-Poisson equations" style="width: 250px;"/>
