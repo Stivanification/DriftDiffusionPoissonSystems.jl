@@ -497,6 +497,7 @@ function solve_ddpe(mesh::Mesh, Vbddata::Array, ubddata::Array, vbddata::Array, 
 	#initial guess u0 = v0 = 0
 	u = zeros(Float64, nq,1)
 	v = zeros(Float64, nq,1)
+	V = zeros(Float64, nq,1)
 
 	# elemental charge in Couloumb
 	q = 1.6021766*10.0^(-19)
@@ -512,10 +513,10 @@ function solve_ddpe(mesh::Mesh, Vbddata::Array, ubddata::Array, vbddata::Array, 
 
 	#fixed point iteration of G
 	while control > tol
-		u0,v0 = u,v
+		u0,v0,V0 = u,v,V
 		u,v,V = G(mesh, u, v, U_T, n_i, tau_p, tau_n, mu_p, mu_n, neu_nodes1, neu_nodes2, gD, n, MV, bdMV, ar, Vbddata, ubddata, vbddata, C, tol)
 
-		control = maximum([abs(u-u0) abs(v-v0)])
+		control = maximum([abs(u-u0) abs(v-v0) abs(V-V0)])
 		count_dracula += 1
 		println("iteration $count_dracula, tolerance: $control")
 	end
