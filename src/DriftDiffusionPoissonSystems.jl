@@ -1,11 +1,21 @@
 module DriftDiffusionPoissonSystems
 
-using EllipticFEM
 using PyPlot
 
-export construct_mesh,solve_ddpe,solve_semlin_poisson
+export Mesh,read_mesh,construct_mesh,solve_ddpe,solve_semlin_poisson
 
-#############################################################
+type Mesh
+    #2xnrnodes array with [x;y] coords in each column
+    nodes::Array{Float64, 2}
+
+    #4xnredges array with [node1; node2; phys_prop; geom_prop] in each column
+    edges::Array{Int64, 2}
+
+    #5xnrelements array with [node1; node2; node3; phys_prop; geom_prop]
+    elements::Array{Int64, 2}
+end
+
+###############################################################################
 # construct_mesh(...) is a simple script that generates a .geo file to be processed with gmsh
 # input: rectangle endpoints, endpoints of the dirichlet boundaries on the left and right side, triangle width h, meshname
 # output: meshname.geo
@@ -43,6 +53,72 @@ function construct_mesh(Endpoints::Array, Dirpoints::Array, h::Float64, meshname
 
 	close(outfile)
 end
+
+###############################################################################
+# read_mesh(...) is a function that converts a gmsh file to Type Mesh
+# input: path to file
+# output: Mesh
+function read_mesh(path)
+
+    in = open(path, "r")
+    lines = readdlm(in)
+    i = 1
+    @assert lines[i] == "\$MeshFormat"
+    i += 1
+    s = lines[i]
+    @assert s[1] == 2.2
+    i += 1
+    @assert lines[i] == "\$EndMeshFormat"
+    i += 1
+
+    if lines[i] == "\$PhysicalNames"
+        i += 1
+        nr_names = lines[i]
+        i += nr_names + 2 #Skip names
+    end
+
+    #Save each node as type Node and collect nodes into nodes array
+    @assert lines[i] == "\$Nodes"
+    i += 1
+    nr_nodes = lines[i]
+    nodes = zeros(2, nr_nodes)
+    @assert lines[i+1:i+nr_nodes,4]==vec(zeros(nr_nodes,1))
+    nodes[:,:]=lines[i+1:i+nr_nodes,2:3]'
+    i += nr_nodes+1
+    @assert lines[i] == "\$EndNodes"
+    i += 1
+
+    #Save each element and edge
+    @assert lines[i] == "\$Elements"
+    i += 1
+    nr_all_elements = lines[i]
+    pos_edges = findin(lines[i+1:i+nr_all_elements,2],1)
+    nr_edges = length(pos_edges)
+    edges = Array{Int64}(4,nr_edges)
+    pos_elements = findin(lines[i+1:i+nr_all_elements,2],2)
+    nr_elements = length(pos_elements)
+    elements = Array{Int64}(5,nr_elements)
+    @assert lines[i+pos_edges,3] == vec(ones(nr_edges,1)*2)
+    edges[:,:] = lines[i+pos_edges,[6,7,4,5]]'
+    @assert lines[i+pos_elements,3] == vec(ones(nr_elements,1)*2)
+    elements[:,:] = lines[i+pos_elements,[6,7,8,4,5]]'
+
+    if nr_all_elements != nr_edges+nr_elements
+            error("Unknown type of elements used! Please only use edges and triangular elements!")
+    end
+
+    i+=nr_all_elements+1
+    @assert lines[i] == "\$EndElements"
+    i += 1
+
+    ## Read next section if available.
+    if i <= size(lines,1)
+    warn("There are lines in the mesh file that are not needed and cannot be taken into account.")
+    end
+    close(in)
+    Mesh(nodes, edges, elements)
+end
+
 
 #############################################################
 # aquire_boundary is a helping function that converts the boundary information into the form needed later.

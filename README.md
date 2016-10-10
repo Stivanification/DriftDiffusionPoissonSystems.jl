@@ -1,7 +1,5 @@
 # DriftDiffusionPoissonSystems.jl &mdash; A 2D Finite Element Method Solver for Drift-Diffusion-Poisson Systems and Semilinear Poisson Equations Written in Julia
 
-[![Build Status](https://travis-ci.org/Stivanification/DriftDiffusionPoissonSystems.jl.svg?branch=master)](https://travis-ci.org/Stivanification/DriftDiffusionPoissonSystems.jl)
-
 This package provides a numerical solution to drift-diffusion poisson equations in Slotboom variables. The system
 
 <img src="DDPSeq.png" alt="Drift-Diffusion-Poisson equations" style="width: 250px;"/>
@@ -38,6 +36,26 @@ information in the composite type `mesh`. This package requires the julia packag
 for reading GMSH-meshs.
 
 # Functions
+
+## read_mesh
+
+* Input: Path to mesh file.
+* Output: Composite type `mesh`.
+
+`read_mesh` reads the GMSH file and creates a composite type `mesh`, which
+contains all necessary information about the mesh.
+
+`mesh` contains the following fields:
+* `nodes`: 2 &times; nr_nodes array containing the node coordinates
+* `edges`: 4 &times; nr_edges array. Lines 1 and 2: nodes forming the
+	edge. Line 3: physical property. Line 4: geometrical property
+	(defining the boundary condition).
+* `elements`: 5 &times; nr_elements array.  Lines 1, 2, and 3: node indices forming the
+	triangle. Line 4: physical property. Line 5: geometrical property.
+
+The physical properties are currently not used as well as the
+geometrical property of the elements. These quantities may be used to
+define subdomains later.
 
 ## construct_mesh
 
