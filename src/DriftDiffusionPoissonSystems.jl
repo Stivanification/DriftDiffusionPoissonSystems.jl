@@ -1,11 +1,21 @@
 module DriftDiffusionPoissonSystems
 
-using EllipticFEM
 using PyPlot
 
-export construct_mesh,solve_ddpe,solve_semlin_poisson
+export Mesh,read_mesh,construct_mesh,solve_ddpe,solve_semlin_poisson
 
-#############################################################
+type Mesh
+    #2xnrnodes array with [x;y] coords in each column
+    nodes::Array{Float64, 2}
+
+    #4xnredges array with [node1; node2; phys_prop; geom_prop] in each column
+    edges::Array{Int64, 2}
+
+    #5xnrelements array with [node1; node2; node3; phys_prop; geom_prop]
+    elements::Array{Int64, 2}
+end
+
+###############################################################################
 # construct_mesh(...) is a simple script that generates a .geo file to be processed with gmsh
 # input: rectangle endpoints, endpoints of the dirichlet boundaries on the left and right side, triangle width h, meshname
 # output: meshname.geo
@@ -44,6 +54,72 @@ function construct_mesh(Endpoints::Array, Dirpoints::Array, h::Float64, meshname
 	close(outfile)
 end
 
+###############################################################################
+# read_mesh(...) is a function that converts a gmsh file to Type Mesh
+# input: path to file
+# output: Mesh
+function read_mesh(path)
+
+    in = open(path, "r")
+    lines = readdlm(in)
+    i = 1
+    @assert lines[i] == "\$MeshFormat"
+    i += 1
+    s = lines[i]
+    @assert s[1] == 2.2
+    i += 1
+    @assert lines[i] == "\$EndMeshFormat"
+    i += 1
+
+    if lines[i] == "\$PhysicalNames"
+        i += 1
+        nr_names = lines[i]
+        i += nr_names + 2 #Skip names
+    end
+
+    #Save each node as type Node and collect nodes into nodes array
+    @assert lines[i] == "\$Nodes"
+    i += 1
+    nr_nodes = lines[i]
+    nodes = zeros(2, nr_nodes)
+    @assert lines[i+1:i+nr_nodes,4]==vec(zeros(nr_nodes,1))
+    nodes[:,:]=lines[i+1:i+nr_nodes,2:3]'
+    i += nr_nodes+1
+    @assert lines[i] == "\$EndNodes"
+    i += 1
+
+    #Save each element and edge
+    @assert lines[i] == "\$Elements"
+    i += 1
+    nr_all_elements = lines[i]
+    pos_edges = findin(lines[i+1:i+nr_all_elements,2],1)
+    nr_edges = length(pos_edges)
+    edges = Array{Int64}(4,nr_edges)
+    pos_elements = findin(lines[i+1:i+nr_all_elements,2],2)
+    nr_elements = length(pos_elements)
+    elements = Array{Int64}(5,nr_elements)
+    @assert lines[i+pos_edges,3] == vec(ones(nr_edges,1)*2)
+    edges[:,:] = lines[i+pos_edges,[6,7,4,5]]'
+    @assert lines[i+pos_elements,3] == vec(ones(nr_elements,1)*2)
+    elements[:,:] = lines[i+pos_elements,[6,7,8,4,5]]'
+
+    if nr_all_elements != nr_edges+nr_elements
+            error("Unknown type of elements used! Please only use edges and triangular elements!")
+    end
+
+    i+=nr_all_elements+1
+    @assert lines[i] == "\$EndElements"
+    i += 1
+
+    ## Read next section if available.
+    if i <= size(lines,1)
+    warn("There are lines in the mesh file that are not needed and cannot be taken into account.")
+    end
+    close(in)
+    Mesh(nodes, edges, elements)
+end
+
+
 #############################################################
 # aquire_boundary is a helping function that converts the boundary information into the form needed later.
 # input: mesh, bddata
@@ -53,6 +129,7 @@ function aquire_boundary(mesh::Mesh, bddata::Array)
 		### find out which BC applies where
 		neu_bd=div(findin(bddata,'N'),3)+1
 		diri_bd=div(findin(bddata,'D'),3)+1
+
 		##check if all edges are covered
 		if length(neu_bd)+length(diri_bd)!=size(bddata,2)
 			error("Could not understand boundary file. Not all parts of the boundary have BC assigned.")
@@ -77,6 +154,7 @@ function aquire_boundary(mesh::Mesh, bddata::Array)
 			append!(diri_nodes,unique(vec(mesh.edges[1:2,diri_edges])))
 			append!(diri_values,map(node->bddata[3,diri_bd[j]](mesh.nodes[1,node],mesh.nodes[2,node]),diri_nodes[end-length(diri_edges):end]))
 		end
+
 		diri_data=unique([diri_nodes diri_values],1)
 		gD=map(Float64,diri_data[:,2])
 
@@ -91,6 +169,7 @@ function aquire_boundary(mesh::Mesh, bddata::Array)
 	neu_nodes1,neu_nodes2,gD,n
 end
 
+
 ###################################################################
 # MV_assemble assembles the mass matrix for the equation
 # -\epsilon \Delta V = q n_i (u\cdot exp(V/U_T) - v\cdot exp(-V/U_T)) + qC(x)
@@ -104,8 +183,8 @@ function MV_assemble(mesh::Mesh, n::Array, gD::Array, epsilon::Float64)
     nq = size(mesh.nodes,2)
     nme = size(mesh.elements,2)
 
-	ph_prop_11 = epsilon.*ones(Float64,1,nme)
-	ph_prop_22 = epsilon.*ones(Float64,1,nme)
+		ph_prop_11 = vec(epsilon.*ones(Float64,1,nme))
+		ph_prop_22 = vec(epsilon.*ones(Float64,1,nme))
 
     #uu = 2xnr_elems array of node2-node3 with order [x;y]
     #vv = 2xnr_elems array of node3-node1
@@ -125,20 +204,22 @@ function MV_assemble(mesh::Mesh, n::Array, gD::Array, epsilon::Float64)
     vv = q3-q1
     ww = q1-q2
     ar = (uu[1,:].*vv[2,:]-uu[2,:].*vv[1,:])./2
+		ar = ar'
 
-    #stiffness matrix assembly
-    ar4 = abs(ar.*4)
-    Kg = zeros(9,nme)
-    Kg[1,:] = sum(uu.*[ph_prop_22;ph_prop_11].*uu,1)./ar4
-    Kg[2,:] = sum(vv.*[ph_prop_22;ph_prop_11].*uu,1)./ar4
-    Kg[3,:] = sum(ww.*[ph_prop_22;ph_prop_11].*uu,1)./ar4
-    Kg[5,:] = sum(vv.*[ph_prop_22;ph_prop_11].*vv,1)./ar4
-    Kg[6,:] = sum(ww.*[ph_prop_22;ph_prop_11].*vv,1)./ar4
-    Kg[9,:] = sum(ww.*[ph_prop_22;ph_prop_11].*ww,1)./ar4
-    Kg[[4,7,8],:] = Kg[[2,3,6],:]
-    Ig = vec(mesh.elements[[1, 2, 3, 1, 2, 3, 1, 2, 3],:])
-    Jg = vec(mesh.elements[[1, 1, 1, 2, 2, 2, 3, 3, 3],:])
-    Kg = vec(Kg[:])
+		#stiffness matrix assembly
+		ar4 = abs(ar.*4)
+		Kg = zeros(9,nme)
+		ph_proper = [ph_prop_22 ph_prop_11;]'
+		Kg[1,:] = sum(uu.*ph_proper.*uu,1)./ar4
+		Kg[2,:] = sum(vv.*ph_proper.*uu,1)./ar4
+		Kg[3,:] = sum(ww.*ph_proper.*uu,1)./ar4
+		Kg[5,:] = sum(vv.*ph_proper.*vv,1)./ar4
+		Kg[6,:] = sum(ww.*ph_proper.*vv,1)./ar4
+		Kg[9,:] = sum(ww.*ph_proper.*ww,1)./ar4
+		Kg[[4,7,8],:] = Kg[[2,3,6],:]
+		Ig = vec(mesh.elements[[1, 2, 3, 1, 2, 3, 1, 2, 3],:])
+		Jg = vec(mesh.elements[[1, 1, 1, 2, 2, 2, 3, 3, 3],:])
+		Kg = vec(Kg[:])
 
 	### Start changing stiffness matrix entries
     rows = findin(Ig, n)
@@ -323,31 +404,33 @@ function uvsolve(mesh::Mesh, V::Array, bddata::Array, U_T::Float64, tau_p::Float
 	vv = q3-q1
 	ww = q1-q2
 	ar = (uu[1,:].*vv[2,:]-uu[2,:].*vv[1,:])./2
+	ar = ar'
 
 	V = V/U_T
 	V1 = reshape(V[a1],1,length(V[a1]))
-    V2 = reshape(V[a2],1,length(V[a2]))
-   	V3 = reshape(V[a3],1,length(V[a3]))
+  V2 = reshape(V[a2],1,length(V[a2]))
+  V3 = reshape(V[a3],1,length(V[a3]))
 
 	#calculate coordinates of triangle centers
 	centroid_x = (mesh.nodes[1,a1]+mesh.nodes[1,a2]+mesh.nodes[1,a3])./3
 	centroid_y = (mesh.nodes[2,a1]+mesh.nodes[2,a2]+mesh.nodes[2,a3])./3
 
 	#mu-values at the triangle centers
-	mucentroid = map(mu,centroid_x,centroid_y)
-
+	mucentroid = vec(map(mu,centroid_x,centroid_y))
 	# estimate permittivity on triangle by taking the permittivity value at the triangle center
-	ph_prop = mucentroid.*exp((V1+V2+V3)/3)
+	ph_prop = mucentroid.*vec(exp((V1+V2+V3)/3))
 
-	#stiffness matrix assembly
 	ar4 = abs(ar.*4)
 	Kg = zeros(9,nme)
-	Kg[1,:] = sum(uu.*[ph_prop;ph_prop].*uu,1)./ar4
-	Kg[2,:] = sum(vv.*[ph_prop;ph_prop].*uu,1)./ar4
-	Kg[3,:] = sum(ww.*[ph_prop;ph_prop].*uu,1)./ar4
-	Kg[5,:] = sum(vv.*[ph_prop;ph_prop].*vv,1)./ar4
-	Kg[6,:] = sum(ww.*[ph_prop;ph_prop].*vv,1)./ar4
-	Kg[9,:] = sum(ww.*[ph_prop;ph_prop].*ww,1)./ar4
+	ph_proper = [ph_prop ph_prop;]'
+	# println("uu: $(size(uu))")
+	# println("ph_roper: $(size(ph_proper))")
+	Kg[1,:] = sum(uu.*ph_proper.*uu,1)./ar4
+	Kg[2,:] = sum(vv.*ph_proper.*uu,1)./ar4
+	Kg[3,:] = sum(ww.*ph_proper.*uu,1)./ar4
+	Kg[5,:] = sum(vv.*ph_proper.*vv,1)./ar4
+	Kg[6,:] = sum(ww.*ph_proper.*vv,1)./ar4
+	Kg[9,:] = sum(ww.*ph_proper.*ww,1)./ar4
 	Kg[[4,7,8],:] = Kg[[2,3,6],:]
 	Ig = vec(mesh.elements[[1, 2, 3, 1, 2, 3, 1, 2, 3],:])
 	Jg = vec(mesh.elements[[1, 1, 1, 2, 2, 2, 3, 3, 3],:])
@@ -497,6 +580,7 @@ function solve_ddpe(mesh::Mesh, Vbddata::Array, ubddata::Array, vbddata::Array, 
 	#initial guess u0 = v0 = 0
 	u = zeros(Float64, nq,1)
 	v = zeros(Float64, nq,1)
+	V = zeros(Float64, nq,1)
 
 	# elemental charge in Couloumb
 	q = 1.6021766*10.0^(-19)
@@ -512,10 +596,10 @@ function solve_ddpe(mesh::Mesh, Vbddata::Array, ubddata::Array, vbddata::Array, 
 
 	#fixed point iteration of G
 	while control > tol
-		u0,v0 = u,v
+		u0,v0,V0 = u,v,V
 		u,v,V = G(mesh, u, v, U_T, n_i, tau_p, tau_n, mu_p, mu_n, neu_nodes1, neu_nodes2, gD, n, MV, bdMV, ar, Vbddata, ubddata, vbddata, C, tol)
 
-		control = maximum([abs(u-u0) abs(v-v0)])
+		control = maximum([abs(u-u0) abs(v-v0) abs(V-V0)])
 		count_dracula += 1
 		println("iteration $count_dracula, tolerance: $control")
 	end
@@ -528,7 +612,7 @@ end
 # 	- \nabla \cdot (A \nabla u) = f(x,y,u) with boundary conditions consisting of both Dirichlet and Neumann parts
 # 	g := df/du, that is g is the partial derivative of the right hand side with respect to u
 
-function solve_semlin_poisson(mesh::Mesh, A::Array, bddata::Array, f::Function, g::Function, tol=10.0^(-14))
+function solve_semlin_poisson(mesh, A::Array, bddata::Array, f::Function, g::Function, tol=10.0^(-14))
     #data acquiry
     nq = size(mesh.nodes,2)
     nme = size(mesh.elements,2)
@@ -556,29 +640,31 @@ function solve_semlin_poisson(mesh::Mesh, A::Array, bddata::Array, f::Function, 
     vv = q3-q1
     ww = q1-q2
     ar = (uu[1,:].*vv[2,:]-uu[2,:].*vv[1,:])./2
+		ar = ar'
 
-    #stiffness matrix assembly
-    ar4 = abs(ar.*4)
-    Kg = zeros(9,nme)
-    Kg[1,:] = sum(uu.*[ph_prop_22;ph_prop_11].*uu,1)./ar4
-    Kg[2,:] = sum(vv.*[ph_prop_22;ph_prop_11].*uu,1)./ar4
-    Kg[3,:] = sum(ww.*[ph_prop_22;ph_prop_11].*uu,1)./ar4
-    Kg[5,:] = sum(vv.*[ph_prop_22;ph_prop_11].*vv,1)./ar4
-    Kg[6,:] = sum(ww.*[ph_prop_22;ph_prop_11].*vv,1)./ar4
-    Kg[9,:] = sum(ww.*[ph_prop_22;ph_prop_11].*ww,1)./ar4
-    Kg[[4,7,8],:] = Kg[[2,3,6],:]
-    Ig = vec(mesh.elements[[1, 2, 3, 1, 2, 3, 1, 2, 3],:])
-    Jg = vec(mesh.elements[[1, 1, 1, 2, 2, 2, 3, 3, 3],:])
-    Kg = vec(Kg[:])
+		#stiffness matrix assembly
+		ar4 = abs(ar.*4)
+		Kg = zeros(9,nme)
+		ph_proper = [ph_prop_22 ph_prop_11]'
+		Kg[1,:] = sum(uu.*ph_proper.*uu,1)./ar4
+		Kg[2,:] = sum(vv.*ph_proper.*uu,1)./ar4
+		Kg[3,:] = sum(ww.*ph_proper.*uu,1)./ar4
+		Kg[5,:] = sum(vv.*ph_proper.*vv,1)./ar4
+		Kg[6,:] = sum(ww.*ph_proper.*vv,1)./ar4
+		Kg[9,:] = sum(ww.*ph_proper.*ww,1)./ar4
+		Kg[[4,7,8],:] = Kg[[2,3,6],:]
+		Ig = vec(mesh.elements[[1, 2, 3, 1, 2, 3, 1, 2, 3],:])
+		Jg = vec(mesh.elements[[1, 1, 1, 2, 2, 2, 3, 3, 3],:])
+		Kg = vec(Kg[:])
 
-	## start with intial guess for the right hand side integrals
-	##	calculate positions of the triangle medians
-    halfa_x=(mesh.nodes[1,a1]+mesh.nodes[1,a2])./2
-    halfa_y=(mesh.nodes[2,a1]+mesh.nodes[2,a2])./2
-    halfb_x=(mesh.nodes[1,a2]+mesh.nodes[1,a3])./2
-    halfb_y=(mesh.nodes[2,a2]+mesh.nodes[2,a3])./2
-    halfc_x=(mesh.nodes[1,a3]+mesh.nodes[1,a1])./2
-    halfc_y=(mesh.nodes[2,a3]+mesh.nodes[2,a1])./2
+		## calculate positions of the triangle medians
+
+		halfa_x=(mesh.nodes[1,a1]+mesh.nodes[1,a2])./2
+		halfa_y=(mesh.nodes[2,a1]+mesh.nodes[2,a2])./2
+		halfb_x=(mesh.nodes[1,a2]+mesh.nodes[1,a3])./2
+		halfb_y=(mesh.nodes[2,a2]+mesh.nodes[2,a3])./2
+		halfc_x=(mesh.nodes[1,a3]+mesh.nodes[1,a1])./2
+		halfc_y=(mesh.nodes[2,a3]+mesh.nodes[2,a1])./2
 
     ## initial guess V = 0
     V = transpose(zeros(Float64, 1, nq))
@@ -587,10 +673,11 @@ function solve_semlin_poisson(mesh::Mesh, A::Array, bddata::Array, f::Function, 
     V2 = reshape(V[a2],1,length(V[a2]))
     V3 = reshape(V[a3],1,length(V[a3]))
 
-    fa=f(halfa_x,halfa_y, 0)
-    fb=f(halfb_x,halfb_y, 0)
-    fc=f(halfc_x,halfc_y, 0)
-    rhs=[fa fb fc]
+		## start with intial guess for the right hand side integrals
+		fa=transpose(vec(f(vec(halfa_x),vec(halfa_y), 0)))
+		fb=transpose(vec(f(vec(halfb_x),vec(halfb_y), 0)))
+		fc=transpose(vec(f(vec(halfc_x),vec(halfc_y), 0)))
+	  rhs=[fa fb fc]
 
     Irhs=vec([a1 a2 a3])
     Jrhs=vec(ones(Int64,length(Irhs)))
@@ -623,12 +710,13 @@ function solve_semlin_poisson(mesh::Mesh, A::Array, bddata::Array, f::Function, 
    		### We use the formula int_dE gn*eta ds ~ |E|/2*g(center_x,center_y)
 
    		##Calculate the flows at the edges.
-   		neumanndata=sqrt((mesh.nodes[1,neu_nodes1]-mesh.nodes[1,neu_nodes2]).^2+(mesh.nodes[2,neu_nodes1]-mesh.nodes[2,neu_nodes2]).^2)'.*neu_fct/2
+   		neumanndata=sqrt((mesh.nodes[1,neu_nodes1]-mesh.nodes[1,neu_nodes2]).^2+(mesh.nodes[2,neu_nodes1]-mesh.nodes[2,neu_nodes2]).^2).*neu_fct/2
+			neumanndata = vec(repmat(neumanndata,2))
 
     	#The vector [neu_nodes1;neu_nodes2] together with the repeated neumanndata adds all the Neumann data to the correct nodes.
   		append!(Irhs,vec([neu_nodes1;neu_nodes2]))
    		Jrhs=vec(ones(Int64,length(Irhs)))
-   		append!(Krhs,repmat(vec(neumanndata),2))
+   		append!(Krhs,neumanndata)
 
 	end
 
@@ -647,7 +735,7 @@ function solve_semlin_poisson(mesh::Mesh, A::Array, bddata::Array, f::Function, 
     #n = boundary_nodes(mesh)
     n=diri_data[:,1]
 
-	### Start changing stiffness matrix entries
+		## Start changing stiffness matrix entries
     rows = findin(Ig, n)
     cols = findin(Jg, n)
     ### bdM gives the matrix necessary for subtraction from RHS
@@ -678,56 +766,56 @@ function solve_semlin_poisson(mesh::Mesh, A::Array, bddata::Array, f::Function, 
     	## They can be calculated using the algorithm to construct
     	## the weighted mass matrix WM according to the paper
 
-    		W1 = g(mesh.nodes[1,a1], mesh.nodes[2,a1], V1).*ar/30
-    		W2 = g(mesh.nodes[1,a2], mesh.nodes[2,a2], V2).*ar/30
-    		W3 = g(mesh.nodes[1,a3], mesh.nodes[2,a3], V3).*ar/30
+  		W1 = g(mesh.nodes[1,a1], mesh.nodes[2,a1], V1).*ar/30
+  		W2 = g(mesh.nodes[1,a2], mesh.nodes[2,a2], V2).*ar/30
+  		W3 = g(mesh.nodes[1,a3], mesh.nodes[2,a3], V3).*ar/30
 
 			WKg = zeros(Float64,9,nme)
-    		WKg[1,:] = 3.*W1 + W2 + W3
-    		WKg[2,:] = W1 + W2 + W3./2
-    		WKg[3,:] = W1 + W2./2 + W3
-    		WKg[5,:] = W1 + 3.*W2 + W3
-    		WKg[6,:] = W1./2 + W2 + W3
-    		WKg[9,:] = W1 + W2 + 3.*W3
-    		WKg[[4,7,8],:] = WKg[[2,3,6],:]
+  		WKg[1,:] = 3.*W1 + W2 + W3
+  		WKg[2,:] = W1 + W2 + W3./2
+  		WKg[3,:] = W1 + W2./2 + W3
+  		WKg[5,:] = W1 + 3.*W2 + W3
+  		WKg[6,:] = W1./2 + W2 + W3
+  		WKg[9,:] = W1 + W2 + 3.*W3
+  		WKg[[4,7,8],:] = WKg[[2,3,6],:]
 			WIg = vec(mesh.elements[[1, 2, 3, 1, 2, 3, 1, 2, 3],:])
-    		WJg = vec(mesh.elements[[1, 1, 1, 2, 2, 2, 3, 3, 3],:])
-    		WKg = vec(WKg[:])
+  		WJg = vec(mesh.elements[[1, 1, 1, 2, 2, 2, 3, 3, 3],:])
+  		WKg = vec(WKg[:])
 
-    		J0 = full(sparse(WIg[:], WJg[:], WKg[:], nq, nq))
+  		J0 = full(sparse(WIg[:], WJg[:], WKg[:], nq, nq))
  			DeltaV = -(M-J0)\(M*V-b)
-    		V += DeltaV
+  		V += DeltaV
 
 			V1 = reshape(V[a1],1,length(V[a1]))
-    		V2 = reshape(V[a2],1,length(V[a2]))
-    		V3 = reshape(V[a3],1,length(V[a3]))
+  		V2 = reshape(V[a2],1,length(V[a2]))
+  		V3 = reshape(V[a3],1,length(V[a3]))
 
 			Ca = (V1 + V2)./2
 			Cb = (V2 + V3)./2
 			Cc = (V3 + V1)./2
 
-			fa=f(halfa_x,halfa_y, Ca)
-			fb=f(halfb_x,halfb_y, Cb)
-			fc=f(halfc_x,halfc_y, Cc)
-			rhs=[fa fb fc]
+			fa=transpose(vec(f(vec(halfa_x),vec(halfa_y), vec(Ca))))
+			fb=transpose(vec(f(vec(halfb_x),vec(halfb_y), vec(Cb))))
+			fc=transpose(vec(f(vec(halfc_x),vec(halfc_y), vec(Cc))))
+		  rhs=[fa fb fc]
 
-    		rhsint=(rhs.*abs([ar ar ar]))./3 #triangle quadrature using medians
-    		Krhs=vec(rhsint)
+  		rhsint=(rhs.*abs([ar ar ar]))./3 #triangle quadrature using medians
+  		Krhs=vec(rhsint)
 
 			if neu_bd != []
-				append!(Krhs,repmat(vec(neumanndata),2))
-		    end
+				append!(Krhs,neumanndata)
+	    end
 
-    		## Subtract the columns from the right side.
-    		b=full(sparse(Irhs,Jrhs,Krhs,nq,1))
-    		b -= bdM[:, n] * gD
-    		b[n] = gD
+  		## Subtract the columns from the right side.
+  		b=full(sparse(Irhs,Jrhs,Krhs,nq,1))
+  		b -= bdM[:, n] * gD
+  		b[n] = gD
 
-		count += 1
-		control = maximum(abs(M*V - b))
-		println("iteration $count, tolerance: $control")
-   	end
-    V
+			count += 1
+			control = maximum(abs(M*V - b))
+			println("iteration $count, tolerance: $control")
+ 	end
+  V
 end
 
 end#module

@@ -37,6 +37,26 @@ for reading GMSH-meshs.
 
 # Functions
 
+## read_mesh
+
+* Input: Path to mesh file.
+* Output: Composite type `mesh`.
+
+`read_mesh` reads the GMSH file and creates a composite type `mesh`, which
+contains all necessary information about the mesh.
+
+`mesh` contains the following fields:
+* `nodes`: 2 &times; nr_nodes array containing the node coordinates
+* `edges`: 4 &times; nr_edges array. Lines 1 and 2: nodes forming the
+	edge. Line 3: physical property. Line 4: geometrical property
+	(defining the boundary condition).
+* `elements`: 5 &times; nr_elements array.  Lines 1, 2, and 3: node indices forming the
+	triangle. Line 4: physical property. Line 5: geometrical property.
+
+The physical properties are currently not used as well as the
+geometrical property of the elements. These quantities may be used to
+define subdomains later.
+
 ## construct_mesh
 
 * Input: Array `Endpoints`, Array `DirPoints` defining the length/position of the 3- and 7-section in the image below

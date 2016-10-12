@@ -1,5 +1,4 @@
 using DriftDiffusionPoissonSystems
-using EllipticFEM
 using PyPlot
 using Base.Test
 
