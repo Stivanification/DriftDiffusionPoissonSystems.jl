@@ -4,12 +4,12 @@ os:
   - linux
   - osx
 julia:
-  - release
+  - 0.5
   - nightly
 notifications:
   email: false
   
 script:  
   - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
-  - julia -e 'ENV["PYTHON"] = ""; Pkg.clone("PyPlot"); Pkg.build("PyPlot")'
+  - julia -e 'ENV["PYTHON"] = ""; Pkg.add("PyPlot")'
   - julia -e 'Pkg.clone(pwd()); Pkg.build("DriftDiffusionPoissonSystems"); Pkg.test("DriftDiffusionPoissonSystems"; coverage=true)'
