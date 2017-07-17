@@ -3,8 +3,7 @@ module DriftDiffusionPoissonSystems
 using PyPlot
 using FastGaussQuadrature
 
-export Mesh,read_mesh,construct_mesh,solve_ddpe,solve_semlin_poisson
-export aquire_boundary_separate_edges, MV_assemble, G, get_gradients ## TODO: Remove after testing
+export Mesh,read_mesh,construct_mesh4,construct_mesh8,solve_ddpe,calculate_current,solve_semlin_poisson
 
 type Mesh
     #2xnrnodes array with [x;y] coords in each column
@@ -18,10 +17,10 @@ type Mesh
 end
 
 ###############################################################################
-# construct_mesh(...) is a simple script that generates a .geo file to be processed with gmsh
+# construct_mesh8(...) is a simple script that generates a .geo file to be processed with gmsh for a rectangle with 8 boundary elements
 # input: rectangle endpoints, endpoints of the dirichlet boundaries on the left and right side, triangle width h, meshname
 # output: meshname.geo
-function construct_mesh(Endpoints::Array, Dirpoints::Array, h::Float64, meshname::AbstractString)
+function construct_mesh8(Endpoints::Array, Dirpoints::Array, h::Float64, meshname::AbstractString)
 	outfile = open("$meshname.geo","w")
 	write(outfile, "h = $h;\n \n")
 
@@ -55,6 +54,38 @@ function construct_mesh(Endpoints::Array, Dirpoints::Array, h::Float64, meshname
 
 	close(outfile)
 end
+
+###############################################################################
+# construct_mesh4(...) is a simple script that generates a .geo file to be processed with gmsh
+# input: rectangle endpoints, triangle width h, meshname
+# output: meshname.geo
+function construct_mesh4(Endpoints::Array, h::Float64, meshname::AbstractString)
+	outfile = open("$meshname.geo","w")
+	write(outfile, "h = $h;\n \n")
+
+	write(outfile, "Point(1)={$(Endpoints[1,1]), $(Endpoints[1,2]), 0, h};\n")
+	write(outfile, "Point(2)={$(Endpoints[2,1]), $(Endpoints[2,2]), 0, h};\n")
+	write(outfile, "Point(3)={$(Endpoints[3,1]), $(Endpoints[3,2]), 0, h};\n")
+	write(outfile, "Point(4)={$(Endpoints[4,1]), $(Endpoints[4,2]), 0, h};\n")
+
+	write(outfile, "Line(1) = {1, 2};\n")
+	write(outfile, "Line(2) = {2, 3};\n")
+	write(outfile, "Line(3) = {3, 4};\n")
+	write(outfile, "Line(4) = {4, 1};\n")
+
+	write(outfile, "Line Loop(1) = {1,2,3,4};\n")
+	write(outfile, "Plane Surface(2) ={1};\n")
+	write(outfile, "Physical Surface(2) = {2};\n")
+	#write(outfile, "Transfinite Surface {2}; \n")
+	write(outfile, "Physical Line(1) = {1, 2, 3, 4};\n")
+	#write(outfile, "Periodic Line{1} = {-3};\n")
+	#write(outfile, "Periodic Line{4} = {-2};\n")
+	write(outfile, "Coherence;")
+
+
+	close(outfile)
+end
+
 
 ###############################################################################
 # read_mesh(...) is a function that converts a gmsh file to Type Mesh

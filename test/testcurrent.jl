@@ -1,14 +1,11 @@
 using DriftDiffusionPoissonSystems
 using PyPlot
 
-import DriftDiffusionPoissonSystems: aquire_boundary_separate_edges, MV_assemble, G, get_gradients, calculate_current
-
     function demoshockley()
 	Endpoints = [-1.0 -1.0 ; 1.0 -1.0 ; 1.0 1.0 ; -1.0 1.0]
-	Dirpoints = [-0.1 0.1 ; -0.1 0.1]
 	h = 0.05
-	meshname = "mesh_h$(h)_square"
-	construct_mesh(Endpoints, Dirpoints, h, meshname)
+	meshname = "mesh_h$(h)_square8"
+	construct_mesh8(Endpoints, Dirpoints, h, meshname)
 	run(`gmsh -2 $meshname.geo`)
 
 	mesh = read_mesh(meshname*".msh")
@@ -34,19 +31,17 @@ import DriftDiffusionPoissonSystems: aquire_boundary_separate_edges, MV_assemble
 
 function demozero()
 	Endpoints = [-1.0 -1.0 ; 1.0 -1.0 ; 1.0 1.0 ; -1.0 1.0]
-	Dirpoints = [-0.1 0.1 ; -0.1 0.1]
 	h = 0.05
-	meshname = "mesh_h$(h)_square"
-	construct_mesh(Endpoints, Dirpoints, h, meshname)
+	meshname = "mesh_h$(h)_square4"
+	construct_mesh4(Endpoints, h, meshname)
 	run(`gmsh -2 $meshname.geo`)
 
 	mesh = read_mesh(meshname*".msh")
 	c = 1.0
 
-	Vbddata = [1 2 3 4 5 6 7 8; 'D' 'D' 'D' 'D' 'D' 'D' 'D' 'D'; (x,y)-> c*(x^2-y^2) (x,y)->c*(x^2-y^2) (x,y)->c*(x^2-y^2) (x,y)->c*(x^2-y^2) (x,y)->c*(x^2-y^2) (x,y)->c*(x^2-y^2) (x,y)->c*(x^2-y^2) (x,y)->c*(x^2-y^2);]
-	ubddata = [1 2 3 4 5 6 7 8; 'D' 'D' 'D' 'D' 'D' 'D' 'D' 'D'; (x,y) ->exp(-c*(x^2-y^2)) (x,y) -> exp(-c*(x^2-y^2)) (x,y) -> exp(-c*(x^2-y^2)) (x,y) -> exp(-c*(x^2-y^2)) (x,y) -> exp(-c*(x^2-y^2)) (x,y) -> exp(-c*(x^2-y^2)) (x,y) -> exp(-c*(x^2-y^2)) (x,y) -> exp(-c*(x^2-y^2));]
-	vbddata = [1 2 3 4 5 6 7 8; 'D' 'D' 'D' 'D' 'D' 'D' 'D' 'D'; (x,y) ->exp(c*(x^2-y^2)) (x,y) -> exp(c*(x^2-y^2)) (x,y) -> exp(c*(x^2-y^2)) (x,y) -> exp(c*(x^2-y^2)) (x,y) -> exp(c*(x^2-y^2)) (x,y) -> exp(c*(x^2-y^2)) (x,y) -> exp(c*(x^2-y^2)) (x,y) -> exp(c*(x^2-y^2));]
-
+	Vbddata = [1 2 3 4; 'D' 'D' 'D' 'D'; (x,y)-> c*(x^2-y^2) (x,y)->c*(x^2-y^2) (x,y)->c*(x^2-y^2) (x,y)->c*(x^2-y^2);]
+	ubddata = [1 2 3 4; 'D' 'D' 'D' 'D'; (x,y) ->exp(-c*(x^2-y^2)) (x,y) -> exp(-c*(x^2-y^2)) (x,y) -> exp(-c*(x^2-y^2)) (x,y) -> exp(-c*(x^2-y^2));]
+	vbddata = [1 2 3 4; 'D' 'D' 'D' 'D'; (x,y) ->exp(c*(x^2-y^2)) (x,y) -> exp(c*(x^2-y^2)) (x,y) -> exp(c*(x^2-y^2)) (x,y) -> exp(c*(x^2-y^2));]
 
 	U_T = 1.0
 	tau_p = 1.0
