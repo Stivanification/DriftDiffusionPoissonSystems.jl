@@ -234,13 +234,10 @@ function MV_assemble(mesh::Mesh, n::Array, gD::Array, epsilon::Function)
 	#calculate coordinates of triangle centers
 	centroid_x = (mesh.nodes[1,a1]+mesh.nodes[1,a2]+mesh.nodes[1,a3])./3
 	centroid_y = (mesh.nodes[2,a1]+mesh.nodes[2,a2]+mesh.nodes[2,a3])./3
-
-	# elementary charge
-	q = 1.6021766*10.0^(-19)
 	
 	# estimate permittivity on triangle by taking the permittivity value at the triangle center
 	# for the sake of simplicity, we divide the equation by q
-	ph_prop = (1/q)*vec(map(epsilon,centroid_x,centroid_y))
+	ph_prop = vec(map(epsilon,centroid_x,centroid_y))
 	
 	# stiffness matrix assembly
 	ar4 = abs(ar.*4)
@@ -326,10 +323,13 @@ function Vsolve(mesh::Mesh, bddata::Array, u::Array, v::Array, U_T::Float64, n_i
 	vb = (v2 + v3)./2
 	vc = (v3 + v1)./2
 
+	#elementary charge
+	q = 1.6021766*10.0^(-19)
+
 	#Right hand side vectors corresponding to a1, a2, a3
-	fa=n_i*(exp(-Sa).*va - exp(Sa).*ua) + C(halfa_x, halfa_y)
-	fb=n_i*(exp(-Sb).*vb - exp(Sb).*ub) + C(halfb_x, halfb_y)
-	fc=n_i*(exp(-Sc).*vc - exp(Sc).*uc) + C(halfc_x, halfc_y)
+	fa= n_i*(exp(-Sa).*va - exp(Sa).*ua) + reshape(C(halfa_x, halfa_y),1,length(a1))
+	fb= n_i*(exp(-Sb).*vb - exp(Sb).*ub) + reshape(C(halfb_x, halfb_y),1,length(a2))
+	fc= n_i*(exp(-Sc).*vc - exp(Sc).*uc) + reshape(C(halfc_x, halfc_y),1,length(a3))
 
 	rhs=[fa fb fc]
 
@@ -391,9 +391,9 @@ function Vsolve(mesh::Mesh, bddata::Array, u::Array, v::Array, U_T::Float64, n_i
 		Sb = (V2 + V3)./(2*U_T)
 		Sc = (V3 + V1)./(2*U_T)
 
-		fa=n_i*(exp(-Sa).*va - exp(Sa).*ua) + C(halfa_x, halfa_y)
-		fb=n_i*(exp(-Sb).*vb - exp(Sb).*ub) + C(halfb_x, halfb_y)
-		fc=n_i*(exp(-Sc).*vc - exp(Sc).*uc) + C(halfc_x, halfc_y)
+		fa= n_i*(exp(-Sa).*va - exp(Sa).*ua) + reshape(C(halfa_x, halfa_y),1,length(a1))
+		fb= n_i*(exp(-Sb).*vb - exp(Sb).*ub) + reshape(C(halfb_x, halfb_y),1,length(a2))
+		fc= n_i*(exp(-Sc).*vc - exp(Sc).*uc) + reshape(C(halfc_x, halfc_y),1,length(a3))
 		rhs=[fa fb fc]
 
 		rhsint=(rhs.*abs([ar ar ar]))./3 #triangle quadrature using medians
@@ -760,7 +760,8 @@ function calculate_current(mesh::Mesh, rec_mode::Symbol, Endpoints::Array, Vbdda
 	aquire_boundary_separate_edges(mesh,Endpoints,Vbddata)
 
 	#assemble mass matrix for the potential equation
-	MV,bdMV,ar,uu,vv,ww = MV_assemble(mesh,n,gD,epsilon)
+	epsilonq = (x,y) -> (1/q)*epsilon(x,y)
+	MV,bdMV,ar,uu,vv,ww = MV_assemble(mesh,n,gD,epsilonq)
 
 	#get gradients of basis functions
 	gradx,grady = get_gradients(uu,vv,ww,ar[1,:])

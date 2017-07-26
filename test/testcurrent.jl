@@ -22,7 +22,7 @@ using PyPlot
 	mu_n = (x,y) -> 1.0
 	n_i = 1.0
 	epsilon = 1.6021766*10.0^(-19)
-	C = (x,y) -> 0
+	C = (x,y) -> zeros(length(x))
 	tol= 10.0^(-12)
 	rec_mode = :shockley
 
@@ -50,7 +50,7 @@ function demozero()
 	mu_n = (x,y) -> 1.0
 	n_i = 1.0
 	epsilon = (x,y) -> 1.6021766*10.0^(-19) * x.*y
-	C = (x,y) -> 0
+	C = (x,y) -> zeros(length(x))
 	tol= 10.0^(-12)
 	rec_mode = :zero
 
