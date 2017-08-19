@@ -43,14 +43,13 @@ using PyPlot
 
 ## Cdop_omega evaluates the function at (x,y) for a given nx2 matrix of dopant locations omega 
 ## sigma should be supplied in units of [nm]
-## returns Cdop in [C/cm^3]
+## returns C_dop_scaled
 function Cdop(x,y, omega::Array{Float64}, sigma::Float64, signs::Array{Int64,1})
 
 	q = 1.6021766*10.0^(-19)
 	n = size(omega,1)
-	c = zeros(size(x))
-	## the factor 10^21 converts [nm^-3] to [cm^-3]
-	f(x,y,w) = (10.0^21) * sqrt(2*pi)^(3/2) * (1/sigma)^3 *exp(-((x-w[1]).^2 + (y-w[2]).^2) ./ (2*sigma^2)) 
+	f(x,y,w) = exp(-((x-w[1]).^2 + (y-w[2]).^2) ./ (2*sigma^2)) 
+	c = 0
 
 	for i in 1:n
 		wi = omega[i,:]
@@ -72,26 +71,44 @@ function point_in_triangle(p::Array{Float64}, p1::Array{Float64}, p2::Array{Floa
     end
 end
 
-function calculate_transistor_random_dopants(mesh::Mesh, omega::Array{Float64,2},signs::Array{Int64,1})
+function calculate_transistor_random_dopants(omega::Array{Float64,2},signs::Array{Int64,1})
 		
+	L = 6.0 * 10.0^(-6) # length of device in cm 
+	H = 4.0 * 10.0^(-6) # height of device in cm (we assume L > H)
+
+	V_bottom = -1.0 #external applied voltage at the bottom in Volt
+	V_top = 0.0 #external applied voltage at the top in Volt
+
+	## Mesh Generation
+	Endpoints = [0.0 0.0 ; 1.0 0.0 ; 1.0 (H/L) ; 0.0 (H/L)] #mesh is scaled according to x_scaled * L = x
+	h = 0.05
+	#meshname = "mesh_h005H40"
+	#construct_mesh4(Endpoints, h, meshname)
+	#run(`gmsh -2 $meshname.geo`)
+
+	mesh = read_mesh("mesh_h005H40.msh")
+
+	## Physical Parameters
 	q = 1.6021766*10.0^(-19) # elementary charge in C
-	U_T = 0.026 # thermal voltage in V
+	U_T = 0.0259 # thermal voltage in V
 	n_i = 1.5* 10^10 # intrinsic density in cm^-3
 	mu_n = (x,y) -> 1400 # electron mobility in cm^2/Vs
 	mu_p = (x,y) -> 450  # hole mobility in cm^2 /Vs
 	eps_0 = 8.854*10.0^(-14) # vacuum permittivity in F/cm
-
+	A_Si = 11.7 # relative permittivity of Silicon
 	sigma = 0.3 # influence parameter in nm
-	Endpoints = [0.0 0.0; 60.0 0.0; 60.0 40.0; 0.0 40.0]
-	Vbddata = [1 2 3 4; 'D' 'N' 'D' 'N'; (x,y) -> -1 (x,y) -> 0 (x,y) -> 0 (x,y) -> 0] #voltage of -1V at bottom
 
+	C_scaled(x,y) = Cdop(x,y,omega,sigma,signs)
 
-	C(x,y) = Cdop(x,y,omega,sigma,signs)
-	nD(x,y) = 0.5*(C(x,y) + sqrt(C(x,y).^2+ 4n_i^2))
-	pD(x,y) = 0.5*(-C(x,y) + sqrt(C(x,y).^2+ 4n_i^2))
+	## Scaling Parameters
+	C_tilda = (10.0^21) * (sqrt(2*pi)^(3/2))*(1/sigma)^3 # the factor 10.0^21 converts [nm^-3] to [cm^-3] 
+	mu_tilda = 1000 # reference mobility in cm^2 /Vs (used for scaling)
+	V_tilda = max(abs(V_bottom),abs(V_top),U_T) # reference voltage used for scaling, V = V_tilda * V_scaled.
 
-	ubddata = [1 2 3 4; 'D' 'N' 'D' 'N'; (x,y) -> e^(-Vbddata[3,1](x,y)/U_T) (x,y) -> 0 (x,y) -> e^(-Vbddata[3,3](x,y)/U_T) (x,y) -> 0]
-	vbddata = [1 2 3 4; 'D' 'N' 'D' 'N'; (x,y) -> ((1/n_i^2)* e^(Vbddata[3,1](x,y)/U_T) *pD(x,y))[1] (x,y) -> 0 (x,y) -> ((1/n_i^2)* e^(Vbddata[3,3](x,y)/U_T) * pD(x,y))[1] (x,y) -> 0]
+	lambda_0 = sqrt((eps_0 * V_tilda)/(q*C_tilda*L^2)) # scaling parameter lambda_0. We have lambda(x,y) = lambda_0 * sqrt(epsilon(x,y)) 
+	delta = sqrt(n_i / C_tilda) # scaling parameter delta
+	mu_n_scaled = (x,y) -> mu_n(x,y)/mu_tilda
+	mu_p_scaled = (x,y) -> mu_p(x,y)/mu_tilda
 
 	Asi = 11.7
 	Adop = 4.2
@@ -117,76 +134,111 @@ function calculate_transistor_random_dopants(mesh::Mesh, omega::Array{Float64,2}
 	for i in 1:size(omega,1)
 		push!(ind_dopants, find(x->point_in_triangle(omega[i,:],vertex1(x),vertex2(x),vertex3(x)),1:size(mesh.elements,2)))
 	end
-	ind_dopants = collect(ind_dopants...)
-	
+	ind_dopants = [ind_dopants[i][1] for i in 1:length(ind_dopants)]	
+
 	# returns permittivity of dopant if the point (x,y) is inside a triangle containing a dopant atom,
 	# else returns the permittivity of silicon
 	function epsilon(x::Float64,y::Float64)
 		eps = 0
 		this_triangle = find(z->point_in_triangle([x;y],vertex1(z),vertex2(z),vertex3(z)),1:size(mesh.elements,2))
 		   if length(findin(ind_dopants,this_triangle)) != 0
-			   eps = Adop*eps_0
+			   eps = Adop
 	           else
-			   eps = Asi*eps_0
+			   eps = Asi
 	           end
 		return eps
 	end
 
+	lambda = (x,y) -> lambda_0 * sqrt(epsilon(x,y))
+
+	## We have V_D = U + V_bias, where U is the external applied voltage, and V_bias is given by
+	## ln((1/(2*delta^2))*C_scaled + sqrt(C_scaled^2 + 4*delta^4))
+	U_bottom = V_bottom / V_tilda   # the potential is scaled in multiples of V_tilda  
+	U_top =  V_top / V_tilda 
+	V_bias = (x,y) -> log((1/(2*delta^2)) * (C_scaled(x,y) + sqrt(C_scaled(x,y)^2 + 4*delta^4))) 
+
+	Vbddata = [1 2 3 4; 'D' 'N' 'D' 'N'; (x,y) -> U_bottom + V_bias(x,y)  (x,y) -> 0 (x,y) -> U_top + V_bias(x,y) (x,y) -> 0]
+	# We have u_D = exp(-U(x,y)) and v_D = exp(U(x,y))
+	ubddata = [1 2 3 4; 'D' 'N' 'D' 'N'; (x,y) -> exp(-U_bottom) (x,y) -> 0 (x,y) -> exp(-U_top) (x,y) -> 0]
+	vbddata = [1 2 3 4; 'D' 'N' 'D' 'N'; (x,y) -> exp(U_bottom) (x,y) -> 0 (x,y) -> exp(U_top) (x,y) -> 0]
+
 	rec_mode = :zero # R = 0
 	tau_p = 0.0
 	tau_n = 0.0
 	tol = 10.0^(-12)
 
-	I,V,u,v=calculate_current(mesh,rec_mode,Endpoints,Vbddata,ubddata,vbddata,epsilon,U_T,n_i,tau_p,tau_n,mu_p,mu_n,C,tol)
-		
+	I,V,u,v=calculate_current(mesh, rec_mode, Endpoints, Vbddata, ubddata, vbddata, lambda, delta, tau_p, tau_n, mu_p_scaled, mu_n_scaled,C_scaled,tol)
 
+	I
 end
 
 
-function calculate_transistor(mesh::Mesh)
-		
+function calculate_transistor()
+	
+	L = 6.0 * 10.0^(-6) # length of device in cm 
+	H = 4.0 * 10.0^(-6) # height of device in cm (we assume L > H)
+
+	V_bottom = -2.0 #external applied voltage at the bottom in Volt
+	V_top = 0.0 #external applied voltage at the top in Volt
+
+	## Mesh Generation
+	Endpoints = [0.0 0.0 ; 1.0 0.0 ; 1.0 (H/L) ; 0.0 (H/L)] #mesh is scaled according to x_scaled * L = x
+	h = 0.05
+	#meshname = "mesh_h005H40"
+	#construct_mesh4(Endpoints, h, meshname)
+	#run(`gmsh -2 $meshname.geo`)
+
+	mesh = read_mesh("mesh_h005H40.msh")
+
+	## Physical Parameters
 	q = 1.6021766*10.0^(-19) # elementary charge in C
-	U_T = 0.026 # thermal voltage in V
+	U_T = 0.0259 # thermal voltage in V
 	n_i = 1.5* 10^10 # intrinsic density in cm^-3
 	mu_n = (x,y) -> 1400 # electron mobility in cm^2/Vs
 	mu_p = (x,y) -> 450  # hole mobility in cm^2 /Vs
 	eps_0 = 8.854*10.0^(-14) # vacuum permittivity in F/cm
+	A_Si = 11.7 # relative permittivity of Silicon
 
-	sigma = 0.3 # influence parameter in nm
-	Endpoints = [0.0 0.0; 60.0 0.0; 60.0 40.0; 0.0 40.0]
-	Vbddata = [1 2 3 4; 'D' 'N' 'D' 'N'; (x,y) -> -1 (x,y) -> 0 (x,y) -> 0 (x,y) -> 0] #voltage of -1V at bottom
+	## Scaling Parameters
+	C_tilda = 5*10^15 # maximum of absolute value of density in cm^-3, used for scaling purposes
+	mu_tilda = 1000 # reference mobility in cm^2 /Vs (used for scaling)
+	V_tilda = max(abs(V_bottom),abs(V_top),U_T) # reference voltage used for scaling, V = V_tilda * V_scaled.
 
-	function C(x,y)
-		c = zeros(length(x))
-		for i in 1:length(x)
-			if x[i] < 20
-				c[i] = 5*10^15 #Values correspond to 6 dopants
-			elseif 20 <= x[i] <= 40
-			        c[i] = -5*10^15
-			elseif 40 < x[i]
-			        c[i] = 5*10^15
+	lambda = (x,y) -> sqrt((A_Si * eps_0 * V_tilda)/(q*C_tilda*L^2)) # scaling parameter lambda 
+	delta = sqrt(n_i / C_tilda) # scaling parameter delta
+	mu_n_scaled = (x,y) -> mu_n(x,y)/mu_tilda
+	mu_p_scaled = (x,y) -> mu_p(x,y)/mu_tilda
+
+	## This doping function corresponds to a pnp doping, where each doping section is 20nm long
+	function C_scaled(x,y) # C = C_tilda * C_scaled
+			if (1/3)*(H/L) <= y <= (2/3)*(H/L)
+			        c = -1
+			else 
+				c = 1
 			end
-		end
-		c
+			c
 	end
-		    
-	nD(x,y) = 0.5*(C(x,y) + sqrt(C(x,y).^2+ 4n_i^2))
-	pD(x,y) = 0.5*(-C(x,y) + sqrt(C(x,y).^2+ 4n_i^2))
 
-	ubddata = [1 2 3 4; 'D' 'N' 'D' 'N'; (x,y) -> e^(-Vbddata[3,1](x,y)/U_T) (x,y) -> 0 (x,y) -> e^(-Vbddata[3,3](x,y)/U_T) (x,y) -> 0]
-	vbddata = [1 2 3 4; 'D' 'N' 'D' 'N'; (x,y) -> ((1/n_i^2)* e^(Vbddata[3,1](x,y)/U_T) *pD(x,y))[1] (x,y) -> 0 (x,y) -> ((1/n_i^2)* e^(Vbddata[3,3](x,y)/U_T) * pD(x,y))[1] (x,y) -> 0]
+	## We have V_D = U + V_bias, where U is the external applied voltage, and V_bias is given by
+	## ln((1/(2*delta^2))*C_scaled + sqrt(C_scaled^2 + 4*delta^4))
+	U_bottom = V_bottom / V_tilda   # the potential is scaled in multiples of V_tilda  
+	U_top =  V_top / V_tilda 
+	V_bias = (x,y) -> log((1/(2*delta^2)) * (C_scaled(x,y) + sqrt(C_scaled(x,y)^2 + 4*delta^4))) 
 
-	Asi = 11.7
-	epsilon = (x,y) -> Asi*eps_0 
+	Vbddata = [1 2 3 4; 'D' 'N' 'D' 'N'; (x,y) -> U_bottom + V_bias(x,y)  (x,y) -> 0 (x,y) -> U_top + V_bias(x,y) (x,y) -> 0]
+	# We have u_D = exp(-U(x,y)) and v_D = exp(U(x,y))
+	ubddata = [1 2 3 4; 'D' 'N' 'D' 'N'; (x,y) -> exp(-U_bottom) (x,y) -> 0 (x,y) -> exp(-U_top) (x,y) -> 0]
+	vbddata = [1 2 3 4; 'D' 'N' 'D' 'N'; (x,y) -> exp(U_bottom) (x,y) -> 0 (x,y) -> exp(U_top) (x,y) -> 0]
 
 	rec_mode = :zero # R = 0
-	tau_p = 0.0
+	tau_p = 0.0 #because R = 0, tau_n and tau_p can be set to arbitrary values
 	tau_n = 0.0
 	tol = 10.0^(-12)
 
-	I,V,u,v=calculate_current(mesh,rec_mode,Endpoints,Vbddata,ubddata,vbddata,epsilon,U_T,n_i,tau_p,tau_n,mu_p,mu_n,C,tol)
-		
+	I,V,u,v=calculate_current(mesh, rec_mode, Endpoints, Vbddata, ubddata, vbddata, lambda, delta, tau_p, tau_n, mu_p_scaled, mu_n_scaled,C_scaled,tol)
 
+	I = (q*V_tilda * C_tilda * mu_tilda)* I #rescales I to A/cm
+ 
 end
 	
 

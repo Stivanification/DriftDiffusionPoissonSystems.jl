@@ -3,7 +3,8 @@ module DriftDiffusionPoissonSystems
 using PyPlot
 using FastGaussQuadrature
 
-export Mesh,read_mesh,construct_mesh4,construct_mesh8,solve_ddpe,calculate_current,solve_semlin_poisson
+export Mesh,read_mesh,construct_mesh4,construct_mesh8,solve_ddpe,calculate_current,solve_semlin_poisson 
+export G,MV_assemble,aquire_boundary_separate_edges,get_gradients
 
 type Mesh
     #2xnrnodes array with [x;y] coords in each column
@@ -211,7 +212,7 @@ end
 # input: mesh,n  (indices of dirichlet nodes), gD (values at dirichlet nodes), epsilon
 # output: M (mass matrix for the potential equation), bdM (matrix containing boundary information), ar (vector of triangle areas)
 
-function MV_assemble(mesh::Mesh, n::Array, gD::Array, epsilon::Function)
+function MV_assemble(mesh::Mesh, n::Array, gD::Array, lambda::Function)
 	#data acquiry
 	nq = size(mesh.nodes,2)
 	nme = size(mesh.elements,2)
@@ -236,8 +237,7 @@ function MV_assemble(mesh::Mesh, n::Array, gD::Array, epsilon::Function)
 	centroid_y = (mesh.nodes[2,a1]+mesh.nodes[2,a2]+mesh.nodes[2,a3])./3
 	
 	# estimate permittivity on triangle by taking the permittivity value at the triangle center
-	# for the sake of simplicity, we divide the equation by q
-	ph_prop = vec(map(epsilon,centroid_x,centroid_y))
+	ph_prop = vec(map(lambda,centroid_x,centroid_y)).^2
 	
 	# stiffness matrix assembly
 	ar4 = abs(ar.*4)
@@ -275,7 +275,7 @@ end
 ###################################################################
 # Vsolve solves the potential equation for fixed u0, v0 by employing Newton's method
 
-function Vsolve(mesh::Mesh, bddata::Array, u::Array, v::Array, U_T::Float64, n_i::Float64, M::SparseMatrixCSC{Float64,Int64}, bdM::SparseMatrixCSC{Float64,Int64}, ar::Array, neu_nodes1::Array, neu_nodes2::Array, n::Array, gD::Array, C::Function, tol::Float64)
+function Vsolve(mesh::Mesh, bddata::Array, u::Array, v::Array, delta::Float64, M::SparseMatrixCSC{Float64,Int64}, bdM::SparseMatrixCSC{Float64,Int64}, ar::Array, neu_nodes1::Array, neu_nodes2::Array, n::Array, gD::Array, C::Function, tol::Float64)
 
 	#corner point indices
 	a1 = vec(mesh.elements[1,:])
@@ -301,9 +301,9 @@ function Vsolve(mesh::Mesh, bddata::Array, u::Array, v::Array, U_T::Float64, n_i
 	V3 = reshape(V[a3],1,length(V[a3]))
 
 	#Interpolate the solution values of the triangle nodes
-	Sa = (V1 + V2)./(2*U_T)
-	Sb = (V2 + V3)./(2*U_T)
-	Sc = (V3 + V1)./(2*U_T)
+	Sa = (V1 + V2)./2
+	Sb = (V2 + V3)./2
+	Sc = (V3 + V1)./2
 
 	#Partition u0, v0 into parts belonging to the triangle nodes
 	u1 = reshape(u[a1],1,length(u[a1]))
@@ -323,13 +323,10 @@ function Vsolve(mesh::Mesh, bddata::Array, u::Array, v::Array, U_T::Float64, n_i
 	vb = (v2 + v3)./2
 	vc = (v3 + v1)./2
 
-	#elementary charge
-	q = 1.6021766*10.0^(-19)
-
 	#Right hand side vectors corresponding to a1, a2, a3
-	fa= n_i*(exp(-Sa).*va - exp(Sa).*ua) + reshape(C(halfa_x, halfa_y),1,length(a1))
-	fb= n_i*(exp(-Sb).*vb - exp(Sb).*ub) + reshape(C(halfb_x, halfb_y),1,length(a2))
-	fc= n_i*(exp(-Sc).*vc - exp(Sc).*uc) + reshape(C(halfc_x, halfc_y),1,length(a3))
+	fa= delta^2 *(exp(-Sa).*va - exp(Sa).*ua) + reshape(C.(halfa_x, halfa_y),1,length(a1))
+	fb= delta^2 *(exp(-Sb).*vb - exp(Sb).*ub) + reshape(C.(halfb_x, halfb_y),1,length(a2))
+	fc= delta^2 *(exp(-Sc).*vc - exp(Sc).*uc) + reshape(C.(halfc_x, halfc_y),1,length(a3))
 
 	rhs=[fa fb fc]
 
@@ -361,9 +358,9 @@ function Vsolve(mesh::Mesh, bddata::Array, u::Array, v::Array, U_T::Float64, n_i
 		## These integrals can be calculated using the algorithm to construct
 		## the weighted mass matrix WM according to the paper
 
-		W1 = -n_i*(u1.*exp(V1) + v1.*exp(-V1)).*ar/30
-		W2 = -n_i*(u2.*exp(V2) + v2.*exp(-V2)).*ar/30
-		W3 = -n_i*(u3.*exp(V3) + v3.*exp(-V3)).*ar/30
+		W1 = -delta^2*(u1.*exp(V1) + v1.*exp(-V1)).*ar/30
+		W2 = -delta^2*(u2.*exp(V2) + v2.*exp(-V2)).*ar/30
+		W3 = -delta^2*(u3.*exp(V3) + v3.*exp(-V3)).*ar/30
 
 		WKg = zeros(Float64,9,nme)
 		WKg[1,:] = 3.*W1 + W2 + W3
@@ -387,13 +384,13 @@ function Vsolve(mesh::Mesh, bddata::Array, u::Array, v::Array, U_T::Float64, n_i
 		V2 = reshape(V[a2],1,length(V[a2]))
 		V3 = reshape(V[a3],1,length(V[a3]))
 
-		Sa = (V1 + V2)./(2*U_T)
-		Sb = (V2 + V3)./(2*U_T)
-		Sc = (V3 + V1)./(2*U_T)
+		Sa = (V1 + V2)./2
+		Sb = (V2 + V3)./2
+		Sc = (V3 + V1)./2
 
-		fa= n_i*(exp(-Sa).*va - exp(Sa).*ua) + reshape(C(halfa_x, halfa_y),1,length(a1))
-		fb= n_i*(exp(-Sb).*vb - exp(Sb).*ub) + reshape(C(halfb_x, halfb_y),1,length(a2))
-		fc= n_i*(exp(-Sc).*vc - exp(Sc).*uc) + reshape(C(halfc_x, halfc_y),1,length(a3))
+		fa= delta^2 *(exp(-Sa).*va - exp(Sa).*ua) + reshape(C.(halfa_x, halfa_y),1,length(a1))
+		fb= delta^2 *(exp(-Sb).*vb - exp(Sb).*ub) + reshape(C.(halfb_x, halfb_y),1,length(a2))
+		fc= delta^2 *(exp(-Sc).*vc - exp(Sc).*uc) + reshape(C.(halfc_x, halfc_y),1,length(a3))
 		rhs=[fa fb fc]
 
 		rhsint=(rhs.*abs([ar ar ar]))./3 #triangle quadrature using medians
@@ -415,10 +412,11 @@ end
 
 ###################################################################
 #   uvsolve solves the linear PDE
-#	U_T * n_i div(\mu_n *exp(V/U_T) *grad(u)) = n_i * \frac{u*v0 -1}{\tau_p * (exp(V/U_T)*u + 1) + \tau_n * (exp(-V/U_T)*v0 + 1)}
-#   for u, given v0.
+#	div(\mu *exp(V) *grad(u)) = R 
+#   for u given u0 and v0, where R is either the Shockley-Read-Hall
+#   recombination rate or R = 0.
 
-function uvsolve(mesh::Mesh,rec_mode::Symbol,V::Array, bddata::Array, U_T::Float64, tau_p::Float64, tau_n::Float64, mu::Function, neu_nodes1::Array, neu_nodes2::Array, n::Array, u0::Array, v0::Array)
+function uvsolve(mesh::Mesh,rec_mode::Symbol,delta::Float64, V::Array, bddata::Array, tau_p::Float64, tau_n::Float64, mu::Function, neu_nodes1::Array, neu_nodes2::Array, n::Array, u0::Array, v0::Array)
 	#data acquiry
 	nq = size(mesh.nodes,2)
 	nme = size(mesh.elements,2)
@@ -443,10 +441,9 @@ function uvsolve(mesh::Mesh,rec_mode::Symbol,V::Array, bddata::Array, U_T::Float
 	ar = (uu[1,:].*vv[2,:]-uu[2,:].*vv[1,:])./2
 	ar = ar'
 
-	V = V/U_T
 	V1 = reshape(V[a1],1,length(V[a1]))
-	V2 = reshape(V[a2],1,length(V[a2]))
-	V3 = reshape(V[a3],1,length(V[a3]))
+  	V2 = reshape(V[a2],1,length(V[a2]))
+  	V3 = reshape(V[a3],1,length(V[a3]))
 
 	#calculate coordinates of triangle centers
 	centroid_x = (mesh.nodes[1,a1]+mesh.nodes[1,a2]+mesh.nodes[1,a3])./3
@@ -554,9 +551,9 @@ function uvsolve(mesh::Mesh,rec_mode::Symbol,V::Array, bddata::Array, U_T::Float
 
 	if rec_mode == :shockley
 		# weighted mass matrix assembly
-		W1 = -v01./(tau_p*(exp(V1).*u01+ 1) + tau_n*(exp(-V1).*v01 + 1)).*ar/30
-		W2 = -v02./(tau_p*(exp(V2).*u02+ 1) + tau_n*(exp(-V2).*v02 + 1)).*ar/30
-		W3 = -v03./(tau_p*(exp(V3).*u03+ 1) + tau_n*(exp(-V3).*v03 + 1)).*ar/30
+		W1 = - v01./(tau_p*(exp(V1).*u01+ 1) + tau_n*(exp(-V1).*v01 + 1)).*ar/30
+		W2 = - v02./(tau_p*(exp(V2).*u02+ 1) + tau_n*(exp(-V2).*v02 + 1)).*ar/30
+		W3 = - v03./(tau_p*(exp(V3).*u03+ 1) + tau_n*(exp(-V3).*v03 + 1)).*ar/30
 
 		WKg = zeros(Float64,9,nme)
 		WKg[1,:] = 3.*W1 + W2 + W3
@@ -579,14 +576,13 @@ end
 
 
 ##################################################################
-# G is the step function in the fixed point iteration used to solve the drift-diffusion poisson equations,
-# a fixed point of G solves the system.
+# G is the "Gummel operator", a fixed point of G solves the system.
 # recursively called helping function for solve_ddpe(...)
 
-function G(mesh::Mesh, rec_mode::Symbol, u0::Array, v0::Array, U_T::Float64, n_i::Float64, tau_p::Float64, tau_n::Float64, mu_p::Function, mu_n::Function, neu_nodes1::Array, neu_nodes2::Array, gD::Array, n::Array, MV::SparseMatrixCSC{Float64,Int64}, bdMV::SparseMatrixCSC{Float64,Int64}, ar::Array, Vbddata::Array, ubddata::Array, vbddata::Array, C::Function, tol::Float64)
-	V = Vsolve(mesh, Vbddata, u0, v0, U_T, n_i, MV, bdMV, ar, neu_nodes1, neu_nodes2, n, gD, C, tol)
-	u = uvsolve(mesh, rec_mode, V, ubddata, U_T, tau_p, tau_n, mu_p, neu_nodes1, neu_nodes2, n, u0, v0)
-	v = uvsolve(mesh, rec_mode,-V, vbddata, U_T, tau_n, tau_p, mu_n, neu_nodes1, neu_nodes2, n, v0, u0)
+function G(mesh::Mesh, rec_mode::Symbol, u0::Array, v0::Array, delta::Float64, tau_p::Float64, tau_n::Float64, mu_p::Function, mu_n::Function, neu_nodes1::Array, neu_nodes2::Array, gD::Array, n::Array, MV::SparseMatrixCSC{Float64,Int64}, bdMV::SparseMatrixCSC{Float64,Int64}, ar::Array, Vbddata::Array, ubddata::Array, vbddata::Array, C::Function, tol::Float64)
+	V = Vsolve(mesh, Vbddata, u0, v0, delta, MV, bdMV, ar, neu_nodes1, neu_nodes2, n, gD, C, tol)
+	u = uvsolve(mesh, rec_mode,delta, V, ubddata, tau_p, tau_n, mu_p, neu_nodes1, neu_nodes2, n, u0, v0)
+	v = uvsolve(mesh, rec_mode,delta,-V, vbddata, tau_n, tau_p, mu_n, neu_nodes1, neu_nodes2, n, v0, u0)
  	u,v,V
 end
 
@@ -617,7 +613,7 @@ end
 #		   * Arrays Vbddata, ubddata, vbddata (see readme)
 #   output: potential V, slotboom variables u,v
 
-function solve_ddpe(mesh::Mesh, rec_mode::Symbol, Vbddata::Array, ubddata::Array, vbddata::Array, epsilon::Function, U_T::Float64, n_i::Float64, tau_p::Float64, tau_n::Float64, mu_p::Function, mu_n::Function, C::Function, tol=10.0^(-9))
+function solve_ddpe(mesh::Mesh, rec_mode::Symbol, Vbddata::Array, ubddata::Array, vbddata::Array, lambda::Function, delta::Float64, tau_p::Float64, tau_n::Float64, mu_p::Function, mu_n::Function, C::Function, tol=10.0^(-9))
 
 	nq = size(mesh.nodes,2)
 
@@ -626,14 +622,11 @@ function solve_ddpe(mesh::Mesh, rec_mode::Symbol, Vbddata::Array, ubddata::Array
 	v = zeros(Float64, nq,1)
 	V = zeros(Float64, nq,1)
 
-	# elemental charge in Couloumb
-	q = 1.6021766*10.0^(-19)
-
 	#process boundary data for the potential equation
 	neu_nodes1,neu_nodes2,gD,n = aquire_boundary(mesh,Vbddata)
 
 	#assemble mass matrix for the potential equation
-	MV,bdMV,ar = MV_assemble(mesh,n,gD,epsilon)[1:3]
+	MV,bdMV,ar = MV_assemble(mesh,n,gD,lambda)[1:3]
 
 	control = 1
 	count_dracula = 0
@@ -641,7 +634,7 @@ function solve_ddpe(mesh::Mesh, rec_mode::Symbol, Vbddata::Array, ubddata::Array
 	#fixed point iteration of G
 	while control > tol
 		u0,v0,V0 = u,v,V
-		u,v,V = G(mesh, rec_mode, u, v, U_T, n_i, tau_p, tau_n, mu_p, mu_n, neu_nodes1, neu_nodes2, gD, n, MV, bdMV, ar, Vbddata, ubddata, vbddata, C, tol)
+		u,v,V = G(mesh, rec_mode, u, v, delta, tau_p, tau_n, mu_p, mu_n, neu_nodes1, neu_nodes2, gD, n, MV, bdMV, ar, Vbddata, ubddata, vbddata, C, tol)
 
 		control = maximum([abs(u-u0) abs(v-v0) abs(V-V0)])
 		count_dracula += 1
@@ -743,7 +736,7 @@ end
 
 ###################################################################
 
-function calculate_current(mesh::Mesh, rec_mode::Symbol, Endpoints::Array, Vbddata::Array, ubddata::Array, vbddata::Array, epsilon::Function, U_T::Float64, n_i::Float64, tau_p::Float64, tau_n::Float64, mu_p::Function, mu_n::Function, C::Function, tol=10.0^(-9))
+function calculate_current(mesh::Mesh, rec_mode::Symbol, Endpoints::Array, Vbddata::Array, ubddata::Array, vbddata::Array, lambda::Function, delta::Float64,tau_p::Float64, tau_n::Float64, mu_p::Function, mu_n::Function, C::Function, tol=10.0^(-9))
 
 	nq = size(mesh.nodes,2)
 
@@ -752,16 +745,12 @@ function calculate_current(mesh::Mesh, rec_mode::Symbol, Endpoints::Array, Vbdda
 	v = zeros(Float64, nq,1)
 	V = zeros(Float64, nq,1)
 
-	# elemental charge in Coulomb
-	q = 1.6021766*10.0^(-19)
-
 	#process boundary data for the potential equation
 	neu_nodes1,neu_nodes2,gD,n,diri_edges_left,diri_edges_bottom,diri_edges_right,diri_edges_top=
 	aquire_boundary_separate_edges(mesh,Endpoints,Vbddata)
 
 	#assemble mass matrix for the potential equation
-	epsilonq = (x,y) -> (1/q)*epsilon(x,y)
-	MV,bdMV,ar,uu,vv,ww = MV_assemble(mesh,n,gD,epsilonq)
+	MV,bdMV,ar,uu,vv,ww = MV_assemble(mesh,n,gD,lambda)
 
 	#get gradients of basis functions
 	gradx,grady = get_gradients(uu,vv,ww,ar[1,:])
@@ -772,7 +761,7 @@ function calculate_current(mesh::Mesh, rec_mode::Symbol, Endpoints::Array, Vbdda
 	#fixed point iteration of G
 	while control > tol
 		u0,v0,V0 = u,v,V
-		u,v,V = G(mesh, rec_mode, u, v, U_T, n_i, tau_p, tau_n, mu_p, mu_n, neu_nodes1, neu_nodes2, gD, n, MV, bdMV, ar, Vbddata, ubddata, vbddata, C, tol)
+		u,v,V = G(mesh, rec_mode, u, v, delta, tau_p, tau_n, mu_p, mu_n, neu_nodes1, neu_nodes2, gD, n, MV, bdMV, ar, Vbddata, ubddata, vbddata, C, tol)
 
 		control = maximum([abs(u-u0) abs(v-v0) abs(V-V0)])
 		count_dracula += 1
@@ -780,9 +769,9 @@ function calculate_current(mesh::Mesh, rec_mode::Symbol, Endpoints::Array, Vbdda
 	end
     	#V,u,v have been calculated
 
-	## calculate the flux integrals \int (J,nu) at the boundary according to the current relations 
-	## Jp =  q * U_T * n_i * mu_n * e^(V/U_T ) grad(u)
-	## Jn = -q * U_T * n_i * mu_p * e^(-V/U_T ) grad(v)
+	## calculate the (scaled) flux integrals \int (J,nu) at the boundary according to the current relations 
+	## Jp =   mu_n * e^(V) grad(u)
+	## Jn =  -mu_p * e^(-V) grad(v)
 	## J  = Jp + Jn
 	
 	## gauss quadrature of degree 3
@@ -795,9 +784,9 @@ function calculate_current(mesh::Mesh, rec_mode::Symbol, Endpoints::Array, Vbdda
 	interval_transform(x,aa,bb) = (x+1)*(bb-aa)/2 + aa 
 
 	for i in 1:size(diri_edges_left,2)
-		VUT = (x,y) -> Vbddata[3,diri_edges_left[4,i]](x,y)/U_T
-		fp(y) =   U_T * n_i * mu_n(x,y) * exp(VUT(x,y))
-		fn(y) = - U_T * n_i * mu_p(x,y) * exp(-VUT(x,y))
+		Vb = (x,y) -> Vbddata[3,diri_edges_left[4,i]](x,y)
+		fp(y) =   mu_n(x,y) * exp(Vb(x,y))
+		fn(y) = - mu_p(x,y) * exp(-Vb(x,y))
 		a = min(mesh.nodes[2,diri_edges_left[1,i]],mesh.nodes[2,diri_edges_left[2,i]])
 		b = max(mesh.nodes[2,diri_edges_left[1,i]],mesh.nodes[2,diri_edges_left[2,i]])
 		
@@ -817,9 +806,9 @@ function calculate_current(mesh::Mesh, rec_mode::Symbol, Endpoints::Array, Vbdda
 	## calculate electric current on the bottom 
 	y = Endpoints[1,2]
 	for i in 1:size(diri_edges_bottom,2)
-		VUT = (x,y) -> Vbddata[3,diri_edges_bottom[4,i]](x,y)/U_T
-		fp(x) =   U_T * n_i * mu_n(x,y) * exp(VUT(x,y)) 
-		fn(x) = - U_T * n_i * mu_p(x,y) * exp(-VUT(x,y))
+		Vb = (x,y) -> Vbddata[3,diri_edges_bottom[4,i]](x,y)
+		fp(x) =   mu_n(x,y) * exp(Vb(x,y)) 
+		fn(x) = - mu_p(x,y) * exp(-Vb(x,y))
 		a = min(mesh.nodes[1,diri_edges_bottom[1,i]],mesh.nodes[1,diri_edges_bottom[2,i]])
 		b = max(mesh.nodes[1,diri_edges_bottom[1,i]],mesh.nodes[1,diri_edges_bottom[2,i]])
 		
@@ -839,9 +828,9 @@ function calculate_current(mesh::Mesh, rec_mode::Symbol, Endpoints::Array, Vbdda
 	## calculate electric current on the right
 	x = Endpoints[3,1]
 	for i in 1:size(diri_edges_right,2)
-		VUT = (x,y) -> Vbddata[3,diri_edges_right[4,i]](x,y)/U_T
-		fp(y) =   U_T * n_i * mu_n(x,y) * exp(VUT(x,y))
-		fn(y) = - U_T * n_i * mu_p(x,y) * exp(-VUT(x,y))
+		Vb = (x,y) -> Vbddata[3,diri_edges_right[4,i]](x,y)
+		fp(y) =   mu_n(x,y) * exp(Vb(x,y))
+		fn(y) = - mu_p(x,y) * exp(-Vb(x,y))
 		a = min(mesh.nodes[2,diri_edges_right[1,i]],mesh.nodes[2,diri_edges_right[2,i]])
 		b = max(mesh.nodes[2,diri_edges_right[1,i]],mesh.nodes[2,diri_edges_right[2,i]])
 		
@@ -861,9 +850,9 @@ function calculate_current(mesh::Mesh, rec_mode::Symbol, Endpoints::Array, Vbdda
 	## calculate electric current on the top
 	y = Endpoints[3,2]
 	for i in 1:size(diri_edges_top,2)
-		VUT = (x,y) -> Vbddata[3,diri_edges_top[4,i]](x,y)/U_T
-		fp(x) =   U_T * n_i * mu_n(x,y) * exp(VUT(x,y)) 
-		fn(x) = - U_T * n_i * mu_p(x,y) * exp(-VUT(x,y))
+		Vb = (x,y) -> Vbddata[3,diri_edges_top[4,i]](x,y)
+		fp(x) =   mu_n(x,y) * exp(Vb(x,y)) 
+		fn(x) = - mu_p(x,y) * exp(-Vb(x,y))
 		a = min(mesh.nodes[1,diri_edges_top[1,i]],mesh.nodes[1,diri_edges_top[2,i]])
 		b = max(mesh.nodes[1,diri_edges_top[1,i]],mesh.nodes[1,diri_edges_top[2,i]])
 		
@@ -880,7 +869,7 @@ function calculate_current(mesh::Mesh, rec_mode::Symbol, Endpoints::Array, Vbdda
 		I += dot(weights,Ip+In)
 	end
 
-	q*I,V,u,v
+	I,V,u,v
 end
 
 ###################################################################
