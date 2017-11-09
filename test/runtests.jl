@@ -20,18 +20,18 @@ function test_ddpe1()
 	ubddata = [1 2 3 4 5 6 7 8; 'D' 'D' 'D' 'D' 'D' 'D' 'D' 'D'; (x,y) ->exp(-c*(x+y)) (x,y) -> exp(-c*(x+y)) (x,y) -> exp(-c*(x+y)) (x,y) -> exp(-c*(x+y)) (x,y) -> exp(-c*(x+y)) (x,y) -> exp(-c*(x+y)) (x,y) -> exp(-c*(x+y)) (x,y) -> exp(-c*(x+y));]
 	vbddata = [1 2 3 4 5 6 7 8; 'D' 'D' 'D' 'D' 'D' 'D' 'D' 'D'; (x,y) ->exp(c*(x+y)) (x,y) -> exp(c*(x+y)) (x,y) -> exp(c*(x+y)) (x,y) -> exp(c*(x+y)) (x,y) -> exp(c*(x+y)) (x,y) -> exp(c*(x+y)) (x,y) -> exp(c*(x+y)) (x,y) -> exp(c*(x+y));]
 
-	U_T = 1.0
-	tau_p = 1.0
-	tau_n = 1.0
+	lambda = (x,y) -> 1.0
+	delta = 1.0 
+	tau_p = 0.0
+	tau_n = 0.0
 	mu_p = (x,y) -> 1.0
 	mu_n = (x,y) -> 1.0
-	n_i = 1.0
-	epsilon = 1.6021766*10.0^(-19)
-	C = (x,y) -> 0
+	rec_mode = :zero
+	C = (x,y) -> 0.0
 	tol= 10.0^(-12)
 
 	tic()
-	V,u,v=solve_ddpe(mesh,Vbddata,ubddata,vbddata,epsilon,U_T,n_i,tau_p,tau_n,mu_p,mu_n,C, tol)
+	V,u,v=solve_ddpe(mesh,rec_mode,Vbddata,ubddata,vbddata,lambda,delta,tau_p,tau_n,mu_p,mu_n,C, tol)
 	toc()
 
 	xcoord=zeros(size(mesh.nodes,2),1)
@@ -56,18 +56,19 @@ function test_ddpe2()
 	ubddata = [1 2 3 4 5 6 7 8; 'D' 'N' 'D' 'N' 'D' 'N' 'D' 'N'; (x,y) ->exp(-c) (x,y) -> 0 (x,y) -> exp(-c)  (x,y) -> 0 (x,y) -> exp(-c)  (x,y) -> 0 (x,y) -> exp(-c)  (x,y) -> 0;]
 	vbddata = [1 2 3 4 5 6 7 8; 'D' 'N' 'D' 'N' 'D' 'N' 'D' 'N'; (x,y) ->exp(c) (x,y) -> 0 (x,y) -> exp(c) (x,y) -> 0 (x,y) -> exp(c) (x,y) -> 0 (x,y) -> exp(c) (x,y) -> 0;]
 
-	U_T = 1.0
+	lambda = (x,y) -> 1.0
+	delta = 1.0 
 	tau_p = 1.0
 	tau_n = 1.0
 	mu_p = (x,y) -> 1.0
 	mu_n = (x,y) -> 1.0
-	n_i = 1.0
-	epsilon = 1.6021766*10.0^(-19)
-	C = (x,y) -> 0
+	rec_mode = :shockley
+	C = (x,y) -> 0.0
 	tol= 10.0^(-12)
 
+
 	tic()
-	V,u,v=solve_ddpe(mesh,Vbddata,ubddata,vbddata,epsilon,U_T,n_i,tau_p,tau_n,mu_p,mu_n,C, tol)
+	V,u,v=solve_ddpe(mesh,rec_mode,Vbddata,ubddata,vbddata,lambda,delta,tau_p,tau_n,mu_p,mu_n,C, tol)
 	toc()
 
 	xcoord=zeros(size(mesh.nodes,2),1)
