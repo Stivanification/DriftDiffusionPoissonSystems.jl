@@ -1125,7 +1125,7 @@ function M_assemble(mesh::Mesh, A, bddata::Array, n::Array, tol=10.0^(-14))
 
 	# estimate permittivity on triangle by taking the permittivity value at the triangle center
 	ph_prop_11 = map(A[1],centroid_x,centroid_y)
-	ph_prop_22 = map(A[4],centroid_x,centroid_y)
+	ph_prop_11 = map(A[4],centroid_x,centroid_y)
 
 	#stiffness matrix assembly
 	ar4 = abs.(ar.*4)
